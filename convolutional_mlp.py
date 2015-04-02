@@ -32,7 +32,8 @@ import theano.tensor as T
 from theano.tensor.signal import downsample
 from theano.tensor.nnet import conv
 
-from logistic_sgd import LogisticRegression, load_data
+from load_data import load_data
+from logistic_sgd import LogisticRegression
 from mlp import HiddenLayer
 
 
