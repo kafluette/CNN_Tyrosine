@@ -1,134 +1,42 @@
+"""This tutorial introduces the LeNet5 neural network architecture
+using Theano.  LeNet5 is a convolutional neural network, good for
+classifying images. This tutorial shows how to build the architecture,
+and comes with all the hyper-parameters you need to reproduce the
+paper's MNIST results.
+
+
+This implementation simplifies the model in the following ways:
+
+- LeNetConvPool doesn't implement location-specific gain and bias parameters
+- LeNetConvPool doesn't implement pooling by average, it implements pooling
+by max.
+- Digit classification is implemented with a logistic regression rather than
+an RBF network
+- LeNet5 was not fully-connected convolutions at second layer
+
+References:
+- Y. LeCun, L. Bottou, Y. Bengio and P. Haffner:
+Gradient-Based Learning Applied to Document
+Recognition, Proceedings of the IEEE, 86(11):2278-2324, November 1998.
+http://yann.lecun.com/exdb/publis/pdf/lecun-98.pdf
+
+"""
+import os
+import sys
+import time
+
+import numpy
+
 import theano
-from theano import tensor as T
+import theano.tensor as T
+from theano.tensor.signal import downsample
 from theano.tensor.nnet import conv
 
-import numpy
-
-rng = numpy.random.RandomState(23455)
-
-# instantiate 4D tensor for input
-input = T.tensor4(name='input')
-
-# initialize shared variable for weights.
-w_shp = (2, 3, 9, 9)
-w_bound = numpy.sqrt(3 * 9 * 9)
-W = theano.shared( numpy.asarray(
-            rng.uniform(
-                low=-1.0 / w_bound,
-                high=1.0 / w_bound,
-                size=w_shp),
-            dtype=input.dtype), name ='W')
-
-# initialize shared variable for bias (1D tensor) with random values
-# IMPORTANT: biases are usually initialized to zero. However in this
-# particular application, we simply apply the convolutional layer to
-# an image without learning the parameters. We therefore initialize
-# them to random values to "simulate" learning.
-b_shp = (2,)
-b = theano.shared(numpy.asarray(
-            rng.uniform(low=-.5, high=.5, size=b_shp),
-            dtype=input.dtype), name ='b')
-
-# build symbolic expression that computes the convolution of input with filters in w
-conv_out = conv.conv2d(input, W)
-
-# build symbolic expression to add bias and apply activation function, i.e. produce neural net layer output
-# A few words on ``dimshuffle`` :
-#   ``dimshuffle`` is a powerful tool in reshaping a tensor;
-#   what it allows you to do is to shuffle dimension around
-#   but also to insert new ones along which the tensor will be
-#   broadcastable;
-#   dimshuffle('x', 2, 'x', 0, 1)
-#   This will work on 3d tensors with no broadcastable
-#   dimensions. The first dimension will be broadcastable,
-#   then we will have the third dimension of the input tensor as
-#   the second of the resulting tensor, etc. If the tensor has
-#   shape (20, 30, 40), the resulting tensor will have dimensions
-#   (1, 40, 1, 20, 30). (AxBxC tensor is mapped to 1xCx1xAxB tensor)
-#   More examples:
-#    dimshuffle('x') -> make a 0d (scalar) into a 1d vector
-#    dimshuffle(0, 1) -> identity
-#    dimshuffle(1, 0) -> inverts the first and second dimensions
-#    dimshuffle('x', 0) -> make a row out of a 1d vector (N to 1xN)
-#    dimshuffle(0, 'x') -> make a column out of a 1d vector (N to Nx1)
-#    dimshuffle(2, 0, 1) -> AxBxC to CxAxB
-#    dimshuffle(0, 'x', 1) -> AxB to Ax1xB
-#    dimshuffle(1, 'x', 0) -> AxB to Bx1xA
-output = T.nnet.sigmoid(conv_out + b.dimshuffle('x', 0, 'x', 'x'))
-
-# create theano function to compute filtered images
-f = theano.function([input], output)
+from load_data import load_data
+from logistic_sgd import LogisticRegression
+from mlp import HiddenLayer
 
 
-#Let's have a little fun with this...
-import numpy
-import pylab
-from PIL import Image
-
-# open random image of dimensions 639x516
-img = Image.open(open('doc/images/3wolfmoon.jpg'))
-# dimensions are (height, width, channel)
-img = numpy.asarray(img, dtype='float64') / 256.
-
-# put image in 4D tensor of shape (1, 3, height, width)
-img_ = img.transpose(2, 0, 1).reshape(1, 3, 639, 516)
-filtered_img = f(img_)
-
-# plot original image and first and second components of output
-pylab.subplot(1, 3, 1); pylab.axis('off'); pylab.imshow(img)
-pylab.gray();
-# recall that the convOp output (filtered image) is actually a "minibatch",
-# of size 1 here, so we take index 0 in the first dimension:
-pylab.subplot(1, 3, 2); pylab.axis('off'); pylab.imshow(filtered_img[0, 0, :, :])
-pylab.subplot(1, 3, 3); pylab.axis('off'); pylab.imshow(filtered_img[0, 1, :, :])
-pylab.show()
-
-
-#An example is worth a thousand words...
-from theano.tensor.signal import downsample
-
-input = T.dtensor4('input')
-maxpool_shape = (2, 2)
-pool_out = downsample.max_pool_2d(input, maxpool_shape, ignore_border=True)
-f = theano.function([input],pool_out)
-
-invals = numpy.random.RandomState(1).rand(3, 2, 5, 5)
-print 'With ignore_border set to True:'
-print 'invals[0, 0, :, :] =\n', invals[0, 0, :, :]
-print 'output[0, 0, :, :] =\n', f(invals)[0, 0, :, :]
-
-pool_out = downsample.max_pool_2d(input, maxpool_shape, ignore_border=False)
-f = theano.function([input],pool_out)
-print 'With ignore_border set to False:'
-print 'invals[1, 0, :, :] =\n ', invals[1, 0, :, :]
-print 'output[1, 0, :, :] =\n ', f(invals)[1, 0, :, :]
-
-#This should generate the following output
-#With ignore_border set to True:
-#    invals[0, 0, :, :] =
-#    [[  4.17022005e-01   7.20324493e-01   1.14374817e-04   3.02332573e-01 1.46755891e-01]
-#     [  9.23385948e-02   1.86260211e-01   3.45560727e-01   3.96767474e-01 5.38816734e-01]
-#     [  4.19194514e-01   6.85219500e-01   2.04452250e-01   8.78117436e-01 2.73875932e-02]
-#     [  6.70467510e-01   4.17304802e-01   5.58689828e-01   1.40386939e-01 1.98101489e-01]
-#     [  8.00744569e-01   9.68261576e-01   3.13424178e-01   6.92322616e-01 8.76389152e-01]]
-#    output[0, 0, :, :] =
-#    [[ 0.72032449  0.39676747]
-#     [ 0.6852195   0.87811744]]
-#
-#With ignore_border set to False:
-#    invals[1, 0, :, :] =
-#    [[ 0.01936696  0.67883553  0.21162812  0.26554666  0.49157316]
-#     [ 0.05336255  0.57411761  0.14672857  0.58930554  0.69975836]
-#     [ 0.10233443  0.41405599  0.69440016  0.41417927  0.04995346]
-#     [ 0.53589641  0.66379465  0.51488911  0.94459476  0.58655504]
-#     [ 0.90340192  0.1374747   0.13927635  0.80739129  0.39767684]]
-#    output[1, 0, :, :] =
-#    [[ 0.67883553  0.58930554  0.69975836]
-#     [ 0.66379465  0.94459476  0.58655504]
-#     [ 0.90340192  0.80739129  0.39767684]]
-
-
-#Implements convolution + max-pooling layer
 class LeNetConvPoolLayer(object):
     """Pool Layer of a convolutional network """
 
@@ -144,11 +52,11 @@ class LeNetConvPoolLayer(object):
 
         :type filter_shape: tuple or list of length 4
         :param filter_shape: (number of filters, num input feature maps,
-                              filter height, filter width)
+        filter height, filter width)
 
         :type image_shape: tuple or list of length 4
         :param image_shape: (batch size, num input feature maps,
-                             image height, image width)
+        image height, image width)
 
         :type poolsize: tuple or list of length 2
         :param poolsize: the downsampling (pooling) factor (#rows, #cols)
@@ -202,12 +110,50 @@ class LeNetConvPoolLayer(object):
 
         # store parameters of this layer
         self.params = [self.W, self.b]
-        
-        
-#Initialize the network
-x = T.matrix('x')   # the data is presented as rasterized images
+
+
+def evaluate_lenet5(learning_rate=0.1, n_epochs=200,
+                    dataset='mnist.pkl.gz',
+                    nkerns=[20, 50], batch_size=500):
+    """ Demonstrates lenet on MNIST dataset
+
+    :type learning_rate: float
+    :param learning_rate: learning rate used (factor for the stochastic
+    gradient)
+
+    :type n_epochs: int
+    :param n_epochs: maximal number of epochs to run the optimizer
+
+    :type dataset: string
+    :param dataset: path to the dataset used for training /testing (MNIST here)
+
+    :type nkerns: list of ints
+    :param nkerns: number of kernels on each layer
+    """
+
+    rng = numpy.random.RandomState(23455)
+
+    datasets = load_data(dataset)
+
+    train_set_x, train_set_y = datasets[0]
+    valid_set_x, valid_set_y = datasets[1]
+    test_set_x, test_set_y = datasets[2]
+
+    # compute number of minibatches for training, validation and testing
+    n_train_batches = train_set_x.get_value(borrow=True).shape[0]
+    n_valid_batches = valid_set_x.get_value(borrow=True).shape[0]
+    n_test_batches = test_set_x.get_value(borrow=True).shape[0]
+    n_train_batches /= batch_size
+    n_valid_batches /= batch_size
+    n_test_batches /= batch_size
+
+    # allocate symbolic variables for the data
+    index = T.lscalar()  # index to a [mini]batch
+
+    # start-snippet-1
+    x = T.matrix('x')   # the data is presented as rasterized images
     y = T.ivector('y')  # the labels are presented as 1D vector of
-                        # [int] labels
+    # [int] labels
 
     ######################
     # BUILD ACTUAL MODEL #
@@ -308,7 +254,91 @@ x = T.matrix('x')   # the data is presented as rasterized images
             y: train_set_y[index * batch_size: (index + 1) * batch_size]
         }
     )
-    
-    
-#Run the code
-#python code/convolutional_mlp.py
+    # end-snippet-1
+
+    ###############
+    # TRAIN MODEL #
+    ###############
+    print '... training'
+    # early-stopping parameters
+    patience = 10000  # look as this many examples regardless
+    patience_increase = 2  # wait this much longer when a new best is
+    # found
+    improvement_threshold = 0.995  # a relative improvement of this much is
+    # considered significant
+    validation_frequency = min(n_train_batches, patience / 2)
+    # go through this many
+    # minibatche before checking the network
+    # on the validation set; in this case we
+    # check every epoch
+
+    best_validation_loss = numpy.inf
+    best_iter = 0
+    test_score = 0.
+    start_time = time.clock()
+
+    epoch = 0
+    done_looping = False
+
+    while (epoch < n_epochs) and (not done_looping):
+        epoch = epoch + 1
+        for minibatch_index in xrange(n_train_batches):
+
+            iter = (epoch - 1) * n_train_batches + minibatch_index
+
+            if iter % 100 == 0:
+                print 'training @ iter = ', iter
+            train_model(minibatch_index)
+
+            if (iter + 1) % validation_frequency == 0:
+
+                # compute zero-one loss on validation set
+                validation_losses = [validate_model(i) for i
+                                     in xrange(n_valid_batches)]
+                this_validation_loss = numpy.mean(validation_losses)
+                print('epoch %i, minibatch %i/%i, validation error %f %%' %
+                      (epoch, minibatch_index + 1, n_train_batches,
+                       this_validation_loss * 100.))
+
+                # if we got the best validation score until now
+                if this_validation_loss < best_validation_loss:
+
+                    # improve patience if loss improvement is good enough
+                    if this_validation_loss < best_validation_loss *  \
+                            improvement_threshold:
+                        patience = max(patience, iter * patience_increase)
+
+                    # save best validation score and iteration number
+                    best_validation_loss = this_validation_loss
+                    best_iter = iter
+
+                    # test it on the test set
+                    test_losses = [
+                        test_model(i)
+                        for i in xrange(n_test_batches)
+                    ]
+                    test_score = numpy.mean(test_losses)
+                    print(('     epoch %i, minibatch %i/%i, test error of '
+                           'best model %f %%') %
+                          (epoch, minibatch_index + 1, n_train_batches,
+                           test_score * 100.))
+
+            if patience <= iter:
+                done_looping = True
+                break
+
+    end_time = time.clock()
+    print('Optimization complete.')
+    print('Best validation score of %f %% obtained at iteration %i, '
+          'with test performance %f %%' %
+          (best_validation_loss * 100., best_iter + 1, test_score * 100.))
+    print >> sys.stderr, ('The code for file ' +
+                          os.path.split(__file__)[1] +
+                          ' ran for %.2fm' % ((end_time - start_time) / 60.))
+
+if __name__ == '__main__':
+    evaluate_lenet5()
+
+
+def experiment(state, channel):
+    evaluate_lenet5(state.learning_rate, dataset=state.dataset)
